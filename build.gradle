@@ -1,0 +1,51 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 33
+    buildToolsVersion '33.0.0'
+    
+    namespace 'com.asteroid'
+
+    defaultConfig {
+        applicationId "com.asteroid"
+        minSdkVersion 29
+        targetSdkVersion 33
+        versionCode 1
+        versionName "1.0"
+        
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            debuggable true
+        }
+    }
+
+    flavorDimensions "metaquest"
+    productFlavors {
+        quest3 {
+            dimension "metaquest"
+            manifestPlaceholders = [
+                'oculusAppId': '0'
+            ]
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+    
+    // Meta Quest OVR dependencies
+    implementation 'com.oculus.sdk:oculus-android-unwrapper:+'
+    
+    // Android support
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
+}

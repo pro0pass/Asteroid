@@ -14,26 +14,32 @@
     <uses-permission android:name="android.permission.READ_LOGS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- Meta Quest specific permissions -->
     <uses-feature android:name="android.hardware.vr.headtracking" android:required="false" />
     <uses-feature android:name="com.oculus.software.headtracking" android:required="false" />
+    <uses-feature android:name="com.oculus.software.eye_tracking" android:required="false" />
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <uses-sdk
         android:minSdkVersion="29"
-        android:targetSdkVersion="33" />
+        android:targetSdkVersion="34" />
 
     <application
         android:debuggable="true"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:theme="@style/AppTheme">
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
             android:label="@string/app_name"
             android:screenOrientation="landscape"
-            android:configChanges="orientation|keyboardHidden|screenSize">
+            android:configChanges="orientation|keyboardHidden|screenSize|uiMode|density"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -41,7 +47,8 @@
         </activity>
 
         <!-- APK installer receiver -->
-        <receiver android:name=".APKInstallerReceiver">
+        <receiver android:name=".APKInstallerReceiver"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.PACKAGE_ADDED" />
                 <action android:name="android.intent.action.PACKAGE_REMOVED" />

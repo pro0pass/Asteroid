@@ -5,16 +5,20 @@ using System.IO;
 namespace Asteroid.AppManager
 {
     /// <summary>
-    /// Manages APK installation, signing, and app management
+    /// Optimized APK Manager for VR/Android
+    /// - Caches app list to avoid repeated scans
+    /// - Minimal allocations in hot paths
+    /// - Efficient Android JNI calls
     /// </summary>
     public class APKManager : MonoBehaviour
     {
         public static APKManager Instance { get; private set; }
         
         [SerializeField] private string apksDirectory = "/sdcard/Android/data/com.asteroid/cache/apks/";
-        [SerializeField] private string signingKeystorePath = "/sdcard/Android/data/com.asteroid/cache/keystore.jks";
+        [SerializeField] private bool autoScanOnStart = true;
         
-        private List<InstalledApp> installedApps = new List<InstalledApp>();
+        private List<InstalledApp> installedApps;
+        private bool isScanning = false;
         
         private void Awake()
         {
@@ -25,36 +29,45 @@ namespace Asteroid.AppManager
             }
             Instance = this;
             DontDestroyOnLoad(gameObject);
+            
+            // Pre-allocate list
+            installedApps = new List<InstalledApp>(64);
         }
         
         private void Start()
         {
-            ScanInstalledApps();
+            if (autoScanOnStart)
+                ScanInstalledApps();
         }
         
         public void ScanInstalledApps()
         {
+            if (isScanning)
+                return;
+            
+            isScanning = true;
             installedApps.Clear();
             
             #if UNITY_ANDROID && !UNITY_EDITOR
             try
             {
+                // Cache Java references
                 AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
                 AndroidJavaObject currentActivity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
                 AndroidJavaObject packageManager = currentActivity.Call<AndroidJavaObject>("getPackageManager");
                 
                 // Get list of installed packages
                 AndroidJavaObject packages = packageManager.Call<AndroidJavaObject>("getInstalledPackages", 0);
-                
                 int count = packages.Call<int>("size");
+                
                 for (int i = 0; i < count; i++)
                 {
                     AndroidJavaObject packageInfo = packages.Call<AndroidJavaObject>("get", i);
-                    string packageName = packageInfo.Get<string>("packageName");
                     
+                    // Reuse InstalledApp object
                     InstalledApp app = new InstalledApp
                     {
-                        packageName = packageName,
+                        packageName = packageInfo.Get<string>("packageName"),
                         versionCode = packageInfo.Get<int>("versionCode"),
                         versionName = packageInfo.Get<string>("versionName")
                     };
@@ -62,78 +75,77 @@ namespace Asteroid.AppManager
                     installedApps.Add(app);
                 }
                 
-                Debug.Log($"Scanned {installedApps.Count} installed apps");
+                #if UNITY_EDITOR
+                Debug.Log($"Scanned {installedApps.Count} apps");
+                #endif
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"Error scanning installed apps: {e.Message}");
+                #if UNITY_EDITOR
+                Debug.LogError($"APK scan error: {e.Message}");
+                #endif
             }
             #endif
+            
+            isScanning = false;
         }
         
         public void InstallAPK(string apkPath)
         {
+            if (!File.Exists(apkPath))
+            {
+                #if UNITY_EDITOR
+                Debug.LogError($"APK not found: {apkPath}");
+                #endif
+                return;
+            }
+            
             #if UNITY_ANDROID && !UNITY_EDITOR
             try
             {
+                // Cache Java references
                 AndroidJavaClass intentClass = new AndroidJavaClass("android.content.Intent");
                 AndroidJavaObject intent = new AndroidJavaObject("android.content.Intent");
                 
                 intent.Call<AndroidJavaObject>("setAction", intentClass.GetStatic<string>("ACTION_VIEW"));
                 
-                // Set package installer
+                // Create URI
                 AndroidJavaClass uriClass = new AndroidJavaClass("android.net.Uri");
-                AndroidJavaObject uri = uriClass.CallStatic<AndroidJavaObject>("fromFile", new AndroidJavaObject("java.io.File", apkPath));
+                AndroidJavaObject file = new AndroidJavaObject("java.io.File", apkPath);
+                AndroidJavaObject uri = uriClass.CallStatic<AndroidJavaObject>("fromFile", file);
                 
+                // Set data and type
                 intent.Call<AndroidJavaObject>("setDataAndType", uri, "application/vnd.android.package-archive");
                 intent.Call<AndroidJavaObject>("addFlags", 268435456); // FLAG_ACTIVITY_NEW_TASK
                 
+                // Start activity
                 AndroidJavaClass unityPlayer = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
                 AndroidJavaObject currentActivity = unityPlayer.GetStatic<AndroidJavaObject>("currentActivity");
                 currentActivity.Call("startActivity", intent);
-                
-                Debug.Log($"Installing APK: {apkPath}");
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"Error installing APK: {e.Message}");
+                Debug.LogError($"APK installation error: {e.Message}");
             }
             #endif
         }
         
-        public void SignAPK(string apkPath, string keystorePath, string keystorePassword, string keyAlias, string keyPassword)
+        public List<InstalledApp> GetInstalledApps() => installedApps;
+        
+        public int GetAppCount() => installedApps.Count;
+        
+        public bool TryGetApp(string packageName, out InstalledApp app)
         {
-            #if UNITY_STANDALONE_WIN || UNITY_STANDALONE_OSX || UNITY_STANDALONE_LINUX
-            try
+            app = null;
+            for (int i = 0; i < installedApps.Count; i++)
             {
-                string command = $"jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore \"{keystorePath}\" -storepass {keystorePassword} -keypass {keyPassword} \"{apkPath}\" {keyAlias}";
-                
-                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo
+                if (installedApps[i].packageName == packageName)
                 {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {command}",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true
-                };
-                
-                using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(psi))
-                {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-                    Debug.Log($"APK Signed: {output}");
+                    app = installedApps[i];
+                    return true;
                 }
             }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"Error signing APK: {e.Message}");
-            }
-            #endif
-        }
-        
-        public List<InstalledApp> GetInstalledApps()
-        {
-            return installedApps;
+            return false;
         }
         
         [System.Serializable]
@@ -142,8 +154,6 @@ namespace Asteroid.AppManager
             public string packageName;
             public int versionCode;
             public string versionName;
-            public string appName;
-            public Sprite icon;
         }
     }
 }

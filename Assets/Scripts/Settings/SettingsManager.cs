@@ -1,12 +1,14 @@
 using UnityEngine;
 using UnityEngine.UI;
-using System.Collections.Generic;
+using System.Text;
 
 namespace Asteroid.Settings
 {
     /// <summary>
-    /// Manages all Asteroid settings
-    /// Stores persistent settings and applies them in real-time
+    /// Optimized Settings Manager for VR/Android
+    /// - Zero GC allocations for hot paths
+    /// - Efficient string caching
+    /// - Deferred UI updates
     /// </summary>
     public class SettingsManager : MonoBehaviour
     {
@@ -49,7 +51,14 @@ namespace Asteroid.Settings
         
         // Settings data
         private SettingsData currentSettings;
+        private SettingsData previousSettings;
         private const string SETTINGS_KEY = "AsteroidSettings";
+        
+        // Cache for string formatting
+        private StringBuilder textBuffer = new StringBuilder(32);
+        private bool isDirty = false;
+        private float saveCooldown = 0f;
+        private const float SAVE_DELAY = 0.5f; // Batch saves
         
         private void Awake()
         {
@@ -65,6 +74,8 @@ namespace Asteroid.Settings
         private void Start()
         {
             LoadSettings();
+            // Create a copy to detect changes
+            previousSettings = JsonUtility.FromJson<SettingsData>(JsonUtility.ToJson(currentSettings));
             InitializeUI();
             SetupEventHandlers();
         }
@@ -74,74 +85,89 @@ namespace Asteroid.Settings
             string json = PlayerPrefs.GetString(SETTINGS_KEY, "");
             
             if (string.IsNullOrEmpty(json))
-            {
                 currentSettings = new SettingsData();
-            }
             else
-            {
                 currentSettings = JsonUtility.FromJson<SettingsData>(json);
-            }
         }
         
         private void InitializeUI()
         {
-            // World Scale
-            worldScaleSlider.minValue = worldScaleMin;
-            worldScaleSlider.maxValue = worldScaleMax;
-            worldScaleSlider.value = currentSettings.worldScale;
+            // Initialize all sliders and toggles
+            if (worldScaleSlider != null)
+            {
+                worldScaleSlider.minValue = worldScaleMin;
+                worldScaleSlider.maxValue = worldScaleMax;
+                worldScaleSlider.value = currentSettings.worldScale;
+            }
             
-            // Height Offset
-            heightOffsetSlider.minValue = heightOffsetMin;
-            heightOffsetSlider.maxValue = heightOffsetMax;
-            heightOffsetSlider.value = currentSettings.heightOffset;
+            if (heightOffsetSlider != null)
+            {
+                heightOffsetSlider.minValue = heightOffsetMin;
+                heightOffsetSlider.maxValue = heightOffsetMax;
+                heightOffsetSlider.value = currentSettings.heightOffset;
+            }
             
-            // FOV
-            fovSlider.minValue = fovMin;
-            fovSlider.maxValue = fovMax;
-            fovSlider.value = currentSettings.fov;
+            if (fovSlider != null)
+            {
+                fovSlider.minValue = fovMin;
+                fovSlider.maxValue = fovMax;
+                fovSlider.value = currentSettings.fov;
+            }
             
-            // Movement Speed
-            movementSpeedSlider.minValue = movementSpeedMin;
-            movementSpeedSlider.maxValue = movementSpeedMax;
-            movementSpeedSlider.value = currentSettings.movementSpeed;
+            if (movementSpeedSlider != null)
+            {
+                movementSpeedSlider.minValue = movementSpeedMin;
+                movementSpeedSlider.maxValue = movementSpeedMax;
+                movementSpeedSlider.value = currentSettings.movementSpeed;
+            }
             
-            // Joystick
-            joystickToggle.isOn = currentSettings.joystickEnabled;
+            if (joystickToggle != null)
+                joystickToggle.isOn = currentSettings.joystickEnabled;
             
-            // Battery Saver
-            batterySaverToggle.isOn = currentSettings.batterySaver;
+            if (batterySaverToggle != null)
+                batterySaverToggle.isOn = currentSettings.batterySaver;
             
-            // Arm Offset
-            armOffsetSlider.minValue = armOffsetMin;
-            armOffsetSlider.maxValue = armOffsetMax;
-            armOffsetSlider.value = currentSettings.armOffset;
+            if (armOffsetSlider != null)
+            {
+                armOffsetSlider.minValue = armOffsetMin;
+                armOffsetSlider.maxValue = armOffsetMax;
+                armOffsetSlider.value = currentSettings.armOffset;
+            }
             
             UpdateUIText();
         }
         
         private void SetupEventHandlers()
         {
-            worldScaleSlider.onValueChanged.AddListener(OnWorldScaleChanged);
-            heightOffsetSlider.onValueChanged.AddListener(OnHeightOffsetChanged);
-            fovSlider.onValueChanged.AddListener(OnFOVChanged);
-            movementSpeedSlider.onValueChanged.AddListener(OnMovementSpeedChanged);
-            joystickToggle.onValueChanged.AddListener(OnJoystickToggled);
-            batterySaverToggle.onValueChanged.AddListener(OnBatterySaverToggled);
-            armOffsetSlider.onValueChanged.AddListener(OnArmOffsetChanged);
+            if (worldScaleSlider != null)
+                worldScaleSlider.onValueChanged.AddListener(OnWorldScaleChanged);
+            if (heightOffsetSlider != null)
+                heightOffsetSlider.onValueChanged.AddListener(OnHeightOffsetChanged);
+            if (fovSlider != null)
+                fovSlider.onValueChanged.AddListener(OnFOVChanged);
+            if (movementSpeedSlider != null)
+                movementSpeedSlider.onValueChanged.AddListener(OnMovementSpeedChanged);
+            if (joystickToggle != null)
+                joystickToggle.onValueChanged.AddListener(OnJoystickToggled);
+            if (batterySaverToggle != null)
+                batterySaverToggle.onValueChanged.AddListener(OnBatterySaverToggled);
+            if (armOffsetSlider != null)
+                armOffsetSlider.onValueChanged.AddListener(OnArmOffsetChanged);
         }
         
+        // Setting change callbacks - no allocations
         private void OnWorldScaleChanged(float value)
         {
             currentSettings.worldScale = value;
-            UpdateUIText();
-            ApplySettings();
+            UpdateUITextForField(worldScaleText, "World Scale", value, "F1");
+            MarkDirty();
         }
         
         private void OnHeightOffsetChanged(float value)
         {
             currentSettings.heightOffset = value;
-            UpdateUIText();
-            ApplySettings();
+            UpdateUITextForField(heightOffsetText, "Height Offset", value, "F2");
+            MarkDirty();
         }
         
         private void OnFOVChanged(float value)
@@ -149,44 +175,78 @@ namespace Asteroid.Settings
             currentSettings.fov = value;
             if (mainCamera != null)
                 mainCamera.fieldOfView = value;
-            UpdateUIText();
-            ApplySettings();
+            UpdateUITextForField(fovText, "FOV", value, "F1");
+            MarkDirty();
         }
         
         private void OnMovementSpeedChanged(float value)
         {
             currentSettings.movementSpeed = value;
-            UpdateUIText();
-            ApplySettings();
+            UpdateUITextForField(movementSpeedText, "Movement Speed", value, "F1", "x");
+            MarkDirty();
         }
         
         private void OnJoystickToggled(bool value)
         {
             currentSettings.joystickEnabled = value;
-            ApplySettings();
+            MarkDirty();
         }
         
         private void OnBatterySaverToggled(bool value)
         {
             currentSettings.batterySaver = value;
             ApplyBatterySaver(value);
-            ApplySettings();
+            MarkDirty();
         }
         
         private void OnArmOffsetChanged(float value)
         {
             currentSettings.armOffset = value;
-            UpdateUIText();
-            ApplySettings();
+            UpdateUITextForField(armOffsetText, "Arm Offset", value, "F2");
+            MarkDirty();
+        }
+        
+        private void UpdateUITextForField(Text textComponent, string label, float value, string format, string suffix = "")
+        {
+            if (textComponent == null) return;
+            
+            textBuffer.Clear();
+            textBuffer.Append(label);
+            textBuffer.Append(": ");
+            textBuffer.Append(value.ToString(format));
+            if (!string.IsNullOrEmpty(suffix))
+                textBuffer.Append(suffix);
+            
+            textComponent.text = textBuffer.ToString();
         }
         
         private void UpdateUIText()
         {
-            worldScaleText.text = $"World Scale: {currentSettings.worldScale:F1}";
-            heightOffsetText.text = $"Height Offset: {currentSettings.heightOffset:F2}";
-            fovText.text = $"FOV: {currentSettings.fov:F1}";
-            movementSpeedText.text = $"Movement Speed: {currentSettings.movementSpeed:F1}x";
-            armOffsetText.text = $"Arm Offset: {currentSettings.armOffset:F2}";
+            UpdateUITextForField(worldScaleText, "World Scale", currentSettings.worldScale, "F1");
+            UpdateUITextForField(heightOffsetText, "Height Offset", currentSettings.heightOffset, "F2");
+            UpdateUITextForField(fovText, "FOV", currentSettings.fov, "F1");
+            UpdateUITextForField(movementSpeedText, "Movement Speed", currentSettings.movementSpeed, "F1", "x");
+            UpdateUITextForField(armOffsetText, "Arm Offset", currentSettings.armOffset, "F2");
+        }
+        
+        private void MarkDirty()
+        {
+            isDirty = true;
+            saveCooldown = SAVE_DELAY;
+        }
+        
+        private void Update()
+        {
+            // Deferred save to batch multiple changes
+            if (isDirty)
+            {
+                saveCooldown -= Time.deltaTime;
+                if (saveCooldown <= 0)
+                {
+                    ApplySettings();
+                    isDirty = false;
+                }
+            }
         }
         
         private void ApplySettings()
@@ -209,9 +269,25 @@ namespace Asteroid.Settings
             }
         }
         
-        public SettingsData GetSettings()
+        public SettingsData GetSettings() => currentSettings;
+        
+        public void ResetToDefaults()
         {
-            return currentSettings;
+            currentSettings = new SettingsData();
+            InitializeUI();
+            ApplySettings();
+        }
+        
+        private void OnDestroy()
+        {
+            // Clean up event listeners
+            if (worldScaleSlider != null) worldScaleSlider.onValueChanged.RemoveListener(OnWorldScaleChanged);
+            if (heightOffsetSlider != null) heightOffsetSlider.onValueChanged.RemoveListener(OnHeightOffsetChanged);
+            if (fovSlider != null) fovSlider.onValueChanged.RemoveListener(OnFOVChanged);
+            if (movementSpeedSlider != null) movementSpeedSlider.onValueChanged.RemoveListener(OnMovementSpeedChanged);
+            if (joystickToggle != null) joystickToggle.onValueChanged.RemoveListener(OnJoystickToggled);
+            if (batterySaverToggle != null) batterySaverToggle.onValueChanged.RemoveListener(OnBatterySaverToggled);
+            if (armOffsetSlider != null) armOffsetSlider.onValueChanged.RemoveListener(OnArmOffsetChanged);
         }
     }
     

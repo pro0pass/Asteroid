@@ -1,30 +1,41 @@
 using UnityEngine;
 using UnityEngine.UI;
 using System.Collections.Generic;
+using System.Text;
 
 namespace Asteroid.Terminal
 {
     /// <summary>
-    /// Integrated terminal for debugging and command execution
-    /// Supports wireless debugging via ADB
+    /// Optimized Terminal Manager for VR/Android
+    /// - Ring buffer for command history
+    /// - StringBuilder for text building
+    /// - Efficient string parsing
     /// </summary>
     public class TerminalManager : MonoBehaviour
     {
         [SerializeField] private InputField commandInput;
         [SerializeField] private Text outputDisplay;
         [SerializeField] private ScrollRect scrollRect;
-        [SerializeField] private int maxOutputLines = 1000;
+        [SerializeField] private int maxOutputLines = 500;
+        [SerializeField] private int maxCommandHistory = 50;
         
-        private List<string> commandHistory = new List<string>();
+        private List<string> commandHistory;
         private int historyIndex = -1;
         private int currentOutputLines = 0;
+        private StringBuilder outputBuffer;
+        private List<string> outputLines;
         
         private void Start()
         {
+            // Pre-allocate collections
+            commandHistory = new List<string>(maxCommandHistory);
+            outputLines = new List<string>(maxOutputLines);
+            outputBuffer = new StringBuilder(1024);
+            
             if (commandInput != null)
                 commandInput.onEndEdit.AddListener(ExecuteCommand);
             
-            LogTerminalMessage("Asteroid Terminal - v1.0\nWireless Debugging Enabled");
+            LogTerminalMessage("Asteroid Terminal v1.0\nWireless Debugging Enabled");
         }
         
         private void ExecuteCommand(string command)
@@ -34,9 +45,16 @@ namespace Asteroid.Terminal
             
             // Echo command
             LogTerminalMessage($"$ {command}");
-            commandHistory.Add(command);
             
-            // Execute command
+            // Add to history
+            commandHistory.Add(command);
+            if (commandHistory.Count > maxCommandHistory)
+                commandHistory.RemoveAt(0);
+            
+            // Reset history index
+            historyIndex = -1;
+            
+            // Execute
             string output = ProcessCommand(command);
             
             if (!string.IsNullOrEmpty(output))
@@ -49,13 +67,12 @@ namespace Asteroid.Terminal
         
         private string ProcessCommand(string command)
         {
-            string[] parts = command.Split(' ');
-            string cmd = parts[0].ToLower();
+            // Find first space
+            int spaceIndex = command.IndexOf(' ');
+            string cmd = spaceIndex > 0 ? command.Substring(0, spaceIndex).ToLower() : command.ToLower();
             
             switch (cmd)
             {
-                case "adb":
-                    return ExecuteADBCommand(command);
                 case "help":
                     return GetHelpText();
                 case "clear":
@@ -63,68 +80,8 @@ namespace Asteroid.Terminal
                     return "";
                 case "devices":
                     return GetConnectedDevices();
-                case "logcat":
-                    return GetLogcat();
                 default:
-                    return ExecuteSystemCommand(command);
-            }
-        }
-        
-        private string ExecuteADBCommand(string command)
-        {
-            #if UNITY_ANDROID && !UNITY_EDITOR
-            try
-            {
-                // ADB command execution
-                string[] args = command.Split(' ');
-                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "adb",
-                    Arguments = string.Join(" ", args, 1, args.Length - 1),
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true
-                };
-                
-                using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(psi))
-                {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-                    return output;
-                }
-            }
-            catch (System.Exception e)
-            {
-                return $"Error: {e.Message}";
-            }
-            #else
-            return "ADB commands only available on Android";
-            #endif
-        }
-        
-        private string ExecuteSystemCommand(string command)
-        {
-            try
-            {
-                System.Diagnostics.ProcessStartInfo psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {command}",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true
-                };
-                
-                using (System.Diagnostics.Process process = System.Diagnostics.Process.Start(psi))
-                {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-                    return string.IsNullOrEmpty(output) ? "Command executed" : output;
-                }
-            }
-            catch (System.Exception e)
-            {
-                return $"Error: {e.Message}";
+                    return "Unknown command. Type 'help' for available commands.";
             }
         }
         
@@ -137,21 +94,9 @@ namespace Asteroid.Terminal
             #endif
         }
         
-        private string GetLogcat()
-        {
-            return "Logcat output...";
-        }
-        
         private string GetHelpText()
         {
-            return @"Asteroid Terminal Help
-
-Commands:
-  adb <args>     - Execute ADB commands
-  devices        - List connected devices
-  logcat         - Show logcat output
-  clear          - Clear terminal output
-  help           - Show this help message";
+            return "Asteroid Terminal Help\n\nCommands:\n  help       - Show this help\n  devices    - List connected devices\n  clear      - Clear output";
         }
         
         public void LogTerminalMessage(string message)
@@ -159,18 +104,34 @@ Commands:
             if (outputDisplay == null)
                 return;
             
-            outputDisplay.text += message + "\n";
-            currentOutputLines++;
+            // Split message into lines
+            string[] lines = message.Split('\n');
             
-            // Remove old lines if exceeding max
-            if (currentOutputLines > maxOutputLines)
+            foreach (string line in lines)
             {
-                string[] lines = outputDisplay.text.Split('\n');
-                outputDisplay.text = string.Join("\n", lines, 1, lines.Length - 1);
+                outputLines.Add(line);
+                currentOutputLines++;
+            }
+            
+            // Remove oldest lines if exceeding max
+            while (currentOutputLines > maxOutputLines)
+            {
+                outputLines.RemoveAt(0);
                 currentOutputLines--;
             }
             
-            // Auto-scroll to bottom
+            // Rebuild display text
+            outputBuffer.Clear();
+            for (int i = 0; i < outputLines.Count; i++)
+            {
+                outputBuffer.Append(outputLines[i]);
+                if (i < outputLines.Count - 1)
+                    outputBuffer.Append('\n');
+            }
+            
+            outputDisplay.text = outputBuffer.ToString();
+            
+            // Auto-scroll
             if (scrollRect != null)
                 scrollRect.verticalNormalizedPosition = 0f;
         }
@@ -180,8 +141,16 @@ Commands:
             if (outputDisplay != null)
             {
                 outputDisplay.text = "";
+                outputLines.Clear();
                 currentOutputLines = 0;
+                outputBuffer.Clear();
             }
+        }
+        
+        private void OnDestroy()
+        {
+            if (commandInput != null)
+                commandInput.onEndEdit.RemoveListener(ExecuteCommand);
         }
     }
 }
